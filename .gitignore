@@ -1,0 +1,13 @@
+# Database
+trades.db
+
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+
+# Node.js
+frontend/node_modules/
+
+# macOS
+.DS_Store
