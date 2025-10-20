@@ -47,6 +47,25 @@ def read_trades(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     trades = db.query(models.Trade).offset(skip).limit(limit).all()
     return trades
 
+@app.put("/api/trades/{trade_id}", response_model=schemas.Trade)
+def update_trade(trade_id: int, trade: schemas.TradeUpdate, db: Session = Depends(get_db)):
+    db_trade = db.query(models.Trade).filter(models.Trade.id == trade_id).first()
+    if db_trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    update_data = trade.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_trade, key, value)
+
+    if db_trade.status == "Closed":
+        db_trade.pnl = ((db_trade.premium_received - db_trade.buy_back_price) * db_trade.number_of_contracts * 100) - db_trade.fees - db_trade.closing_fees
+    elif db_trade.status == "Rolled":
+        db_trade.pnl = (db_trade.premium_received * db_trade.number_of_contracts * 100) - db_trade.fees - db_trade.closing_fees
+
+    db.commit()
+    db.refresh(db_trade)
+    return db_trade
+
 @app.put("/api/trades/{trade_id}/close", response_model=schemas.Trade)
 def close_trade(trade_id: int, trade_close: schemas.TradeClose, db: Session = Depends(get_db)):
     db_trade = db.query(models.Trade).filter(models.Trade.id == trade_id).first()
@@ -109,6 +128,44 @@ def roll_trade(trade_id: int, trade_roll: schemas.TradeRoll, db: Session = Depen
     db.refresh(db_trade_to_roll)
 
     return new_trade
+
+@app.get("/api/cost_basis/{ticker}", response_model=schemas.CostBasis)
+def get_cost_basis(ticker: str, db: Session = Depends(get_db)):
+    assigned_put = db.query(models.Trade).filter(
+        models.Trade.underlying_ticker == ticker,
+        models.Trade.trade_type == 'Sell Put',
+        models.Trade.status == 'Assigned'
+    ).order_by(models.Trade.transaction_date.desc()).first()
+
+    if not assigned_put:
+        raise HTTPException(status_code=404, detail="No assigned put found for this ticker")
+
+    original_cost_basis = assigned_put.strike_price
+
+    cumulative_premium = db.query(func.sum(models.Trade.premium_received)).filter(
+        models.Trade.underlying_ticker == ticker,
+        models.Trade.transaction_date >= assigned_put.transaction_date
+    ).scalar()
+
+    cumulative_fees = db.query(func.sum(models.Trade.fees + models.Trade.closing_fees)).filter(
+        models.Trade.underlying_ticker == ticker,
+        models.Trade.transaction_date >= assigned_put.transaction_date
+    ).scalar()
+
+    return schemas.CostBasis(original_cost_basis=original_cost_basis, cumulative_premium=cumulative_premium or 0, cumulative_fees=cumulative_fees or 0)
+
+@app.put("/api/trades/{trade_id}/expire", response_model=schemas.Trade)
+def expire_trade(trade_id: int, db: Session = Depends(get_db)):
+    db_trade = db.query(models.Trade).filter(models.Trade.id == trade_id).first()
+    if db_trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    db_trade.status = "Expired"
+    db_trade.buy_back_price = 0
+    db_trade.pnl = (db_trade.premium_received * db_trade.number_of_contracts * 100) - db_trade.fees
+    db.commit()
+    db.refresh(db_trade)
+    return db_trade
 
 @app.get("/api/dashboard/")
 def get_dashboard_data(db: Session = Depends(get_db)):

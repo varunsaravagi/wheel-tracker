@@ -15,6 +15,16 @@ class TradeBase(BaseModel):
 class TradeCreate(TradeBase):
     pass
 
+class TradeUpdate(BaseModel):
+    underlying_ticker: Optional[str] = None
+    trade_type: Optional[str] = None
+    expiration_date: Optional[date] = None
+    strike_price: Optional[float] = None
+    premium_received: Optional[float] = None
+    number_of_contracts: Optional[int] = None
+    transaction_date: Optional[date] = None
+    fees: Optional[float] = None
+
 class Trade(TradeBase):
     id: int
     status: str
@@ -23,6 +33,11 @@ class Trade(TradeBase):
     pnl: Optional[float] = None
     assigned: bool
     rolled_from_id: Optional[int] = None
+
+class CostBasis(BaseModel):
+    original_cost_basis: float
+    cumulative_premium: float
+    cumulative_fees: float
 
     class Config:
         orm_mode = True
