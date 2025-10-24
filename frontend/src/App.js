@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
-import { getTrades, closeTrade, assignTrade, rollTrade, getDashboardData, updateTrade, getCostBasis, expireTrade } from './api';
+import { getTrades, closeTrade, assignTrade, rollTrade, getDashboardData, updateTrade, getCostBasis, expireTrade, getCumulativePnl } from './api';
 import Dashboard from './Dashboard';
 import TradeForm from './TradeForm';
 import CloseTradeModal from './CloseTradeModal';
@@ -44,6 +44,7 @@ function Home() {
     const [trades, setTrades] = useState([]);
     const [dashboardData, setDashboardData] = useState(null);
     const [costBasisData, setCostBasisData] = useState({});
+    const [cumulativePnlData, setCumulativePnlData] = useState({});
     const [showCloseModal, setShowCloseModal] = useState(false);
     const [showRollModal, setShowRollModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
@@ -60,6 +61,7 @@ function Home() {
 
         const sellCallTrades = response.data.filter(t => t.trade_type === 'Sell Call');
         const tickers = [...new Set(sellCallTrades.map(t => t.underlying_ticker))];
+        
         const costBasisPromises = tickers.map(t => getCostBasis(t));
         const costBasisResults = await Promise.all(costBasisPromises);
         const costBasisMap = costBasisResults.reduce((acc, res, i) => {
@@ -67,6 +69,14 @@ function Home() {
             return acc;
         }, {});
         setCostBasisData(costBasisMap);
+
+        const cumulativePnlPromises = tickers.map(t => getCumulativePnl(t));
+        const cumulativePnlResults = await Promise.all(cumulativePnlPromises);
+        const cumulativePnlMap = cumulativePnlResults.reduce((acc, res, i) => {
+            acc[tickers[i]] = res.data;
+            return acc;
+        }, {});
+        setCumulativePnlData(cumulativePnlMap);
     };
 
     const fetchDashboardData = async () => {
@@ -216,15 +226,16 @@ function Home() {
                             <th>Status</th>
                             <th>Original Cost Basis</th>
                             <th>Adjusted Cost Basis</th>
-                            <th>P&L</th>
+                            <th>Cumulative P&L</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {sellCallTrades.map(trade => {
                             const basis = costBasisData[trade.underlying_ticker];
-                            const originalCostBasis = basis ? basis.original_cost_basis : 'N/A';
-                            const adjustedCostBasis = basis ? basis.original_cost_basis - basis.cumulative_premium + basis.cumulative_fees : 'N/A';
+                            const originalCostBasis = basis ? basis.original_cost_basis.toFixed(2) : 'N/A';
+                            const adjustedCostBasis = basis ? (basis.original_cost_basis - basis.cumulative_premium + basis.cumulative_fees_per_share).toFixed(2) : 'N/A';
+                            const cumulativePnl = cumulativePnlData[trade.underlying_ticker] ? cumulativePnlData[trade.underlying_ticker].cumulative_pnl.toFixed(2) : 'N/A';
 
                             return (
                                 <tr key={trade.id} className={getTradeRowClass(trade)}>
@@ -238,7 +249,7 @@ function Home() {
                                     <td>{trade.status}</td>
                                     <td>{originalCostBasis}</td>
                                     <td>{adjustedCostBasis}</td>
-                                    <td>{trade.pnl ? trade.pnl.toFixed(2) : ''}</td>
+                                    <td>{cumulativePnl}</td>
                                     <td>
                                         <button className="btn btn-sm btn-warning me-1" onClick={() => openEditModal(trade)}>Edit</button>
                                         {trade.status === 'Open' &&

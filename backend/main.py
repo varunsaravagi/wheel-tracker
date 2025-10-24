@@ -36,7 +36,7 @@ def get_db():
 
 @app.post("/api/trades/", response_model=schemas.Trade)
 def create_trade(trade: schemas.TradeCreate, db: Session = Depends(get_db)):
-    db_trade = models.Trade(**trade.dict())
+    db_trade = models.Trade(**trade.model_dump())
     db.add(db_trade)
     db.commit()
     db.refresh(db_trade)
@@ -53,7 +53,7 @@ def update_trade(trade_id: int, trade: schemas.TradeUpdate, db: Session = Depend
     if db_trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
 
-    update_data = trade.dict(exclude_unset=True)
+    update_data = trade.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_trade, key, value)
 
@@ -150,9 +150,18 @@ def get_cost_basis(ticker: str, db: Session = Depends(get_db)):
     cumulative_fees = db.query(func.sum(models.Trade.fees + models.Trade.closing_fees)).filter(
         models.Trade.underlying_ticker == ticker,
         models.Trade.transaction_date >= assigned_put.transaction_date
-    ).scalar()
+    ).scalar() or 0
 
-    return schemas.CostBasis(original_cost_basis=original_cost_basis, cumulative_premium=cumulative_premium or 0, cumulative_fees=cumulative_fees or 0)
+    total_contracts = db.query(func.sum(models.Trade.number_of_contracts)).filter(
+        models.Trade.underlying_ticker == ticker,
+        models.Trade.transaction_date >= assigned_put.transaction_date
+    ).scalar() or 0
+
+    cumulative_fees_per_share = 0
+    if total_contracts > 0:
+        cumulative_fees_per_share = cumulative_fees / (total_contracts * 100)
+
+    return schemas.CostBasis(original_cost_basis=original_cost_basis, cumulative_premium=cumulative_premium or 0, cumulative_fees_per_share=cumulative_fees_per_share)
 
 @app.put("/api/trades/{trade_id}/expire", response_model=schemas.Trade)
 def expire_trade(trade_id: int, db: Session = Depends(get_db)):
@@ -166,6 +175,41 @@ def expire_trade(trade_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_trade)
     return db_trade
+
+@app.get("/api/cumulative_pnl/{ticker}", response_model=schemas.CumulativePnl)
+def get_cumulative_pnl(ticker: str, db: Session = Depends(get_db)):
+    assigned_put = db.query(models.Trade).filter(
+        models.Trade.underlying_ticker == ticker,
+        models.Trade.trade_type == 'Sell Put',
+        models.Trade.status == 'Assigned'
+    ).order_by(models.Trade.transaction_date.desc()).first()
+
+    if not assigned_put:
+        return schemas.CumulativePnl(cumulative_pnl=0)
+
+    trades = db.query(models.Trade).filter(
+        models.Trade.underlying_ticker == ticker,
+        models.Trade.transaction_date >= assigned_put.transaction_date
+    ).all()
+
+    cumulative_options_pnl = sum(trade.pnl for trade in trades if trade.pnl is not None)
+
+    open_trades_premium = sum((trade.premium_received * trade.number_of_contracts * 100) - trade.fees for trade in trades if trade.status == 'Open')
+    cumulative_options_pnl += open_trades_premium
+
+    stock_pnl = 0
+    assigned_call = next((trade for trade in trades if trade.trade_type == 'Sell Call' and trade.status == 'Closed'), None)
+
+    if assigned_call:
+        cost_basis_data = get_cost_basis(ticker, db)
+        adjusted_cost_basis = cost_basis_data.original_cost_basis - cost_basis_data.cumulative_premium + cost_basis_data.cumulative_fees_per_share
+        sell_price = assigned_call.strike_price
+        number_of_shares = assigned_call.number_of_contracts * 100
+        stock_pnl = (sell_price - adjusted_cost_basis) * number_of_shares
+
+    total_cumulative_pnl = cumulative_options_pnl + stock_pnl
+
+    return schemas.CumulativePnl(cumulative_pnl=total_cumulative_pnl)
 
 @app.get("/api/dashboard/")
 def get_dashboard_data(db: Session = Depends(get_db)):

@@ -34,6 +34,10 @@ export const expireTrade = async (tradeId) => {
     return await axios.put(`${API_URL}/trades/${tradeId}/expire`);
 };
 
+export const getCumulativePnl = async (ticker) => {
+    return await axios.get(`${API_URL}/cumulative_pnl/${ticker}`);
+};
+
 export const getDashboardData = async () => {
     return await axios.get(`${API_URL}/dashboard/`);
 };

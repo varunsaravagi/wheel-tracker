@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 DATABASE_URL = "sqlite:////root/options_wheel_tracker/trades.db"
 

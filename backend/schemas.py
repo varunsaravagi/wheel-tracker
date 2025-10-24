@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import date
 from typing import Optional
 
@@ -34,13 +34,14 @@ class Trade(TradeBase):
     assigned: bool
     rolled_from_id: Optional[int] = None
 
+    model_config = ConfigDict(from_attributes=True)
+
 class CostBasis(BaseModel):
     original_cost_basis: float
     cumulative_premium: float
-    cumulative_fees: float
+    cumulative_fees_per_share: float
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TradeClose(BaseModel):
     buy_back_price: float
@@ -54,3 +55,6 @@ class TradeRoll(BaseModel):
     fees: float = 0.0
     closing_fees: float = 0.0
     roll_date: date
+
+class CumulativePnl(BaseModel):
+    cumulative_pnl: float
