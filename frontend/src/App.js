@@ -249,7 +249,8 @@ function Home() {
                                         {trade.status === 'Open' &&
                                             <>
                                                 <button className="btn btn-sm btn-danger me-1" onClick={() => handleExpireTrade(trade.id)}>Expire</button>
-                                                <button className="btn btn-sm btn-info" onClick={() => openRollModal(trade)}>Roll</button>
+                                                <button className="btn btn-sm btn-info me-1" onClick={() => openRollModal(trade)}>Roll</button>
+                                                <button className="btn btn-sm btn-secondary" onClick={() => handleAssignTrade(trade.id)}>Assign</button>
                                             </>
                                         }
                                     </td>
