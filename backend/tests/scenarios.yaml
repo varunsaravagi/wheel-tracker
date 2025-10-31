@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------
+# Test Scenario Documentation
+# ---------------------------------------------------------------------------
+# This file defines data-driven test scenarios for the Options Wheel Tracker API.
+# The test runner will parse this file and execute each scenario.
+#
+# Top Level: A list of scenarios.
+#
+# --- Scenario Structure ---
+# - name: (string) A descriptive name for the test case. This will be used in test reports.
+#   variables: (optional dict) Key-value pairs for defining variables that can be
+#              reused across steps within this scenario.
+#   steps: (list) A sequence of steps to be executed in order.
+#
+# --- Step Structure ---
+#   - name: (optional string) A description of the step's purpose.
+#     action: (string, required) The high-level user action to perform.
+#             Supported actions:
+#               - new_trade: Creates a new trade. (Maps to POST /api/trades/)
+#               - assign: Assigns a put option. (Maps to PUT /api/trades/{id}/assign)
+#               - expire: Expires an option. (Maps to PUT /api/trades/{id}/expire)
+#               - close: Closes a trade. (Maps to PUT /api/trades/{id}/close)
+#               - roll: Rolls a trade. (Maps to PUT /api/trades/{id}/roll)
+#               - verify_state: A read-only action to check the overall state of a ticker.
+#
+#     # --- Action-specific fields ---
+#     payload: (optional dict) The data required for the action (e.g., for new_trade, close).
+#     trade_id: (optional string) The ID of the trade to act upon. Can use variables.
+#     ticker: (optional string) The ticker symbol for verification actions. Can use variables.
+#
+#     # --- Variable and Expectation Structure ---
+#     save_as: (optional string) The name to save the JSON response of the current step
+#              into a variable. This variable can be accessed in later steps using
+#              the syntax {{variable_name.field}}.
+#
+#     expectations: (optional list) A list of assertions to make after the step's
+#                   action is performed.
+#       - type: (string, required) The type of assertion to perform.
+#               Supported types:
+#                 - premium_received: Verifies the 'premium_received' field in the
+#                                     action's direct JSON response.
+#                 - pnl: Verifies the 'pnl' field in the action's direct JSON response.
+#                        (Used for close, roll, expire).
+#                 - cumulative_pnl: Makes a separate API call to GET /api/cumulative_pnl/{ticker}
+#                                   and verifies the result.
+#                 - adjusted_cost_basis: Makes a separate API call to GET /api/cost_basis/{ticker}
+#                                        and verifies the adjusted cost basis.
+#         value: (any, required) The expected value for the assertion. Floating point
+#                numbers will be compared with an approximation.
+# ---------------------------------------------------------------------------
+
+- name: "Wheel Scenario: Sell Put -> Assign -> Sell Call -> Expire"
+  variables:
+    ticker: "TEST"
+    put_strike: 100
+    call_strike: 110
+  steps:
+    - name: "Step 1: Sell a new put option"
+      action: new_trade
+      payload:
+        underlying_ticker: "{{ticker}}"
+        trade_type: "Sell Put"
+        expiration_date: "2025-01-31"
+        strike_price: "{{put_strike}}"
+        premium_received: 1.0
+        number_of_contracts: 1
+        transaction_date: "2025-01-01"
+        fees: 0.66
+      save_as: put_trade
+      expectations:
+        - type: premium_received
+          value: 1.0
+
+    - name: "Step 2: Assign the put option"
+      action: assign
+      trade_id: "{{put_trade.id}}"
+
+    - name: "Step 3: Sell a new call option"
+      action: new_trade
+      payload:
+        underlying_ticker: "{{ticker}}"
+        trade_type: "Sell Call"
+        expiration_date: "2025-02-28"
+        strike_price: "{{call_strike}}"
+        premium_received: 0.5
+        number_of_contracts: 1
+        transaction_date: "2025-02-01"
+        fees: 0.66
+      save_as: call_trade
+      expectations:
+        - type: premium_received
+          value: 0.5
+
+    - name: "Step 4: Expire the call option"
+      action: expire
+      trade_id: "{{call_trade.id}}"
+      expectations:
+        - type: net_premium
+          value: 49.34 # (0.5 * 100) - 0.66
+
+    - name: "Step 5: Verify the final state of the wheel"
+      action: verify_state
+      ticker: "{{ticker}}"
+      expectations:
+        - type: cumulative_pnl
+          value: 49.34 # Only the expired call has generated net premium so far
