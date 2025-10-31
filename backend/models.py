@@ -21,7 +21,7 @@ class Trade(Base):
     status = Column(String, default="Open")
     buy_back_price = Column(Float, nullable=True)
     buy_back_date = Column(Date, nullable=True)
-    pnl = Column(Float, nullable=True)
+    net_premium_received = Column(Float, nullable=True)
     fees = Column(Float, default=0.0)
     closing_fees = Column(Float, default=0.0)
     assigned = Column(Boolean, default=False)

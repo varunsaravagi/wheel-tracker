@@ -29,8 +29,8 @@ class Trade(TradeBase):
     id: int
     status: str
     buy_back_price: Optional[float] = None
-    buy_back_date: Optional[date] = None
-    pnl: Optional[float] = None
+    closing_fees: Optional[float] = None
+    net_premium_received: Optional[float] = None
     assigned: bool
     rolled_from_id: Optional[int] = None
 

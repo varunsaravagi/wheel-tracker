@@ -137,7 +137,7 @@ function Home() {
 
     const getTradeRowClass = (trade) => {
         if (trade.status === 'Closed' || trade.status === 'Expired') {
-            return trade.pnl >= 0 ? 'table-success' : 'table-danger';
+            return trade.net_premium_received >= 0 ? 'table-success' : 'table-danger';
         } else if (trade.status === 'Rolled') {
             return 'table-info';
         } else if (trade.status === 'Assigned') {
@@ -165,20 +165,13 @@ function Home() {
                             <th>Contracts</th>
                             <th>Transaction Date</th>
                             <th>Status</th>
-                            <th>P&L</th>
-                            <th>% P/L</th>
+                            <th>Net Premium</th>
                             <th>Days Held</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {sellPutTrades.map(trade => {
-                            let percentagePnl = "N/A";
-                            if (trade.trade_type === 'Sell Put' && (trade.status === 'Closed' || trade.status === 'Rolled') && trade.strike_price !== 0) {
-                                const finalPremium = trade.premium_received - (trade.buy_back_price || 0);
-                                percentagePnl = `${((finalPremium / trade.strike_price) * 100).toFixed(2)}%`;
-                            }
-
                             const transactionDate = new Date(trade.transaction_date);
                             const buyBackDate = trade.buy_back_date ? new Date(trade.buy_back_date) : new Date();
                             const daysHeld = Math.ceil((buyBackDate - transactionDate) / (1000 * 60 * 60 * 24));
@@ -193,8 +186,7 @@ function Home() {
                                     <td>{trade.number_of_contracts}</td>
                                     <td>{trade.transaction_date}</td>
                                     <td>{trade.status}</td>
-                                    <td>{trade.pnl ? trade.pnl.toFixed(2) : ''}</td>
-                                    <td>{percentagePnl}</td>
+                                    <td>{trade.net_premium_received ? trade.net_premium_received.toFixed(2) : ''}</td>
                                     <td>{daysHeld}</td>
                                     <td>
                                         <button className="btn btn-sm btn-warning me-1" onClick={() => openEditModal(trade)}>Edit</button>
@@ -226,6 +218,7 @@ function Home() {
                             <th>Status</th>
                             <th>Original Cost Basis</th>
                             <th>Adjusted Cost Basis</th>
+                            <th>Net Premium</th>
                             <th>Cumulative P&L</th>
                             <th>Actions</th>
                         </tr>
@@ -249,6 +242,7 @@ function Home() {
                                     <td>{trade.status}</td>
                                     <td>{originalCostBasis}</td>
                                     <td>{adjustedCostBasis}</td>
+                                    <td>{trade.net_premium_received ? trade.net_premium_received.toFixed(2) : ''}</td>
                                     <td>{cumulativePnl}</td>
                                     <td>
                                         <button className="btn btn-sm btn-warning me-1" onClick={() => openEditModal(trade)}>Edit</button>

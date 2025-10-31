@@ -57,11 +57,6 @@ def update_trade(trade_id: int, trade: schemas.TradeUpdate, db: Session = Depend
     for key, value in update_data.items():
         setattr(db_trade, key, value)
 
-    if db_trade.status == "Closed":
-        db_trade.pnl = ((db_trade.premium_received - db_trade.buy_back_price) * db_trade.number_of_contracts * 100) - db_trade.fees - db_trade.closing_fees
-    elif db_trade.status == "Rolled":
-        db_trade.pnl = (db_trade.premium_received * db_trade.number_of_contracts * 100) - db_trade.fees - db_trade.closing_fees
-
     db.commit()
     db.refresh(db_trade)
     return db_trade
@@ -76,7 +71,7 @@ def close_trade(trade_id: int, trade_close: schemas.TradeClose, db: Session = De
     db_trade.buy_back_date = trade_close.buy_back_date
     db_trade.status = "Closed"
     db_trade.closing_fees = trade_close.closing_fees
-    db_trade.pnl = ((db_trade.premium_received - db_trade.buy_back_price) * db_trade.number_of_contracts * 100) - db_trade.fees - db_trade.closing_fees
+    db_trade.net_premium_received = ((db_trade.premium_received - db_trade.buy_back_price) * db_trade.number_of_contracts * 100) - db_trade.fees - db_trade.closing_fees
     db.commit()
     db.refresh(db_trade)
     return db_trade
@@ -104,7 +99,7 @@ def roll_trade(trade_id: int, trade_roll: schemas.TradeRoll, db: Session = Depen
     db_trade_to_roll.buy_back_date = trade_roll.roll_date
     db_trade_to_roll.status = "Rolled"
     db_trade_to_roll.closing_fees = trade_roll.closing_fees
-    db_trade_to_roll.pnl = (db_trade_to_roll.premium_received * db_trade_to_roll.number_of_contracts * 100) - db_trade_to_roll.fees - db_trade_to_roll.closing_fees
+    db_trade_to_roll.net_premium_received = (db_trade_to_roll.premium_received * db_trade_to_roll.number_of_contracts * 100) - db_trade_to_roll.fees - db_trade_to_roll.closing_fees
 
     # Create a new trade
     new_trade = models.Trade(
@@ -171,7 +166,7 @@ def expire_trade(trade_id: int, db: Session = Depends(get_db)):
 
     db_trade.status = "Expired"
     db_trade.buy_back_price = 0
-    db_trade.pnl = (db_trade.premium_received * db_trade.number_of_contracts * 100) - db_trade.fees
+    db_trade.net_premium_received = (db_trade.premium_received * db_trade.number_of_contracts * 100) - db_trade.fees
     db.commit()
     db.refresh(db_trade)
     return db_trade
@@ -192,13 +187,9 @@ def get_cumulative_pnl(ticker: str, db: Session = Depends(get_db)):
         models.Trade.transaction_date >= assigned_put.transaction_date
     ).all()
 
-    cumulative_options_pnl = sum(trade.pnl for trade in trades if trade.pnl is not None)
+    total_net_premium = sum(trade.net_premium_received for trade in trades if trade.net_premium_received is not None)
 
-    open_trades_premium = sum((trade.premium_received * trade.number_of_contracts * 100) - trade.fees for trade in trades if trade.status == 'Open')
-    cumulative_options_pnl += open_trades_premium
-
-    stock_pnl = 0
-    assigned_call = next((trade for trade in trades if trade.trade_type == 'Sell Call' and trade.status == 'Closed'), None)
+    assigned_call = next((trade for trade in trades if trade.trade_type == 'Sell Call' and trade.status == 'Closed' and trade.buy_back_price == 0), None)
 
     if assigned_call:
         cost_basis_data = get_cost_basis(ticker, db)
@@ -206,22 +197,22 @@ def get_cumulative_pnl(ticker: str, db: Session = Depends(get_db)):
         sell_price = assigned_call.strike_price
         number_of_shares = assigned_call.number_of_contracts * 100
         stock_pnl = (sell_price - adjusted_cost_basis) * number_of_shares
-
-    total_cumulative_pnl = cumulative_options_pnl + stock_pnl
-
-    return schemas.CumulativePnl(cumulative_pnl=total_cumulative_pnl)
+        total_cumulative_pnl = total_net_premium + stock_pnl
+        return schemas.CumulativePnl(cumulative_pnl=total_cumulative_pnl)
+    else:
+        return schemas.CumulativePnl(cumulative_pnl=total_net_premium)
 
 @app.get("/api/dashboard/")
 def get_dashboard_data(db: Session = Depends(get_db)):
     total_premium_collected = db.query(func.sum((models.Trade.premium_received * models.Trade.number_of_contracts * 100) - models.Trade.fees)).scalar()
-    total_pnl = db.query(func.sum(models.Trade.pnl)).filter(models.Trade.status.in_(["Closed", "Rolled"])).scalar()
+    total_net_premium = db.query(func.sum(models.Trade.net_premium_received)).filter(models.Trade.status.in_(["Closed", "Rolled"])).scalar()
     closed_trades = db.query(models.Trade).filter(models.Trade.status.in_(["Closed", "Rolled"])).count()
-    winning_trades = db.query(models.Trade).filter(models.Trade.status.in_(["Closed", "Rolled"]), models.Trade.pnl > 0).count()
+    winning_trades = db.query(models.Trade).filter(models.Trade.status.in_(["Closed", "Rolled"]), models.Trade.net_premium_received > 0).count()
     win_rate = (winning_trades / closed_trades) * 100 if closed_trades > 0 else 0
 
     return {
         "total_premium_collected": total_premium_collected or 0,
-        "total_pnl": total_pnl or 0,
+        "total_net_premium": total_net_premium or 0,
         "win_rate": win_rate
     }
 
