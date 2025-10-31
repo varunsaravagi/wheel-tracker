@@ -40,6 +40,7 @@ class CostBasis(BaseModel):
     original_cost_basis: float
     cumulative_premium: float
     cumulative_fees_per_share: float
+    adjusted_cost_basis: float
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -37,6 +37,7 @@ def get_db():
 @app.post("/api/trades/", response_model=schemas.Trade)
 def create_trade(trade: schemas.TradeCreate, db: Session = Depends(get_db)):
     db_trade = models.Trade(**trade.model_dump())
+    db_trade.net_premium_received = (db_trade.premium_received * db_trade.number_of_contracts * 100) - db_trade.fees
     db.add(db_trade)
     db.commit()
     db.refresh(db_trade)
@@ -136,6 +137,7 @@ def get_cost_basis(ticker: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No assigned put found for this ticker")
 
     original_cost_basis = assigned_put.strike_price
+    number_of_shares = assigned_put.number_of_contracts * 100
 
     cumulative_premium = db.query(func.sum(models.Trade.premium_received)).filter(
         models.Trade.underlying_ticker == ticker,
@@ -147,16 +149,18 @@ def get_cost_basis(ticker: str, db: Session = Depends(get_db)):
         models.Trade.transaction_date >= assigned_put.transaction_date
     ).scalar() or 0
 
-    total_contracts = db.query(func.sum(models.Trade.number_of_contracts)).filter(
-        models.Trade.underlying_ticker == ticker,
-        models.Trade.transaction_date >= assigned_put.transaction_date
-    ).scalar() or 0
-
     cumulative_fees_per_share = 0
-    if total_contracts > 0:
-        cumulative_fees_per_share = cumulative_fees / (total_contracts * 100)
+    if number_of_shares > 0:
+        cumulative_fees_per_share = cumulative_fees / number_of_shares
 
-    return schemas.CostBasis(original_cost_basis=original_cost_basis, cumulative_premium=cumulative_premium or 0, cumulative_fees_per_share=cumulative_fees_per_share)
+    adjusted_cost_basis = original_cost_basis - (cumulative_premium or 0) + cumulative_fees_per_share
+
+    return schemas.CostBasis(
+        original_cost_basis=original_cost_basis,
+        cumulative_premium=cumulative_premium or 0,
+        cumulative_fees_per_share=cumulative_fees_per_share,
+        adjusted_cost_basis=round(adjusted_cost_basis, 2)
+    )
 
 @app.put("/api/trades/{trade_id}/expire", response_model=schemas.Trade)
 def expire_trade(trade_id: int, db: Session = Depends(get_db)):
@@ -187,20 +191,25 @@ def get_cumulative_pnl(ticker: str, db: Session = Depends(get_db)):
         models.Trade.transaction_date >= assigned_put.transaction_date
     ).all()
 
-    total_net_premium = sum(trade.net_premium_received for trade in trades if trade.net_premium_received is not None)
-
-    assigned_call = next((trade for trade in trades if trade.trade_type == 'Sell Call' and trade.status == 'Closed' and trade.buy_back_price == 0), None)
+    # Check if the wheel has been completed by a call assignment
+    assigned_call = next((trade for trade in trades if trade.trade_type == 'Sell Call' and trade.status == 'Assigned'), None)
 
     if assigned_call:
+        # If the wheel is complete, calculate the total P&L
+        total_net_premium = sum(trade.net_premium_received for trade in trades if trade.net_premium_received is not None)
+        
         cost_basis_data = get_cost_basis(ticker, db)
-        adjusted_cost_basis = cost_basis_data.original_cost_basis - cost_basis_data.cumulative_premium + cost_basis_data.cumulative_fees_per_share
+        adjusted_cost_basis = cost_basis_data.adjusted_cost_basis
+        
         sell_price = assigned_call.strike_price
         number_of_shares = assigned_call.number_of_contracts * 100
+        
         stock_pnl = (sell_price - adjusted_cost_basis) * number_of_shares
         total_cumulative_pnl = total_net_premium + stock_pnl
         return schemas.CumulativePnl(cumulative_pnl=total_cumulative_pnl)
     else:
-        return schemas.CumulativePnl(cumulative_pnl=total_net_premium)
+        # If the wheel is not complete, the cumulative P&L is considered 0
+        return schemas.CumulativePnl(cumulative_pnl=0)
 
 @app.get("/api/dashboard/")
 def get_dashboard_data(db: Session = Depends(get_db)):

@@ -37,10 +37,11 @@
 #                   action is performed.
 #       - type: (string, required) The type of assertion to perform.
 #               Supported types:
-#                 - premium_received: Verifies the 'premium_received' field in the
-#                                     action's direct JSON response.
-#                 - pnl: Verifies the 'pnl' field in the action's direct JSON response.
-#                        (Used for close, roll, expire).
+#                 - premium_per_share: Verifies the raw 'premium_received' field (per share)
+#                                      in the action's direct JSON response.
+#                 - net_premium_received: Verifies the calculated 'net_premium_received'
+#                                         field in the action's direct JSON response, which
+#                                         accounts for fees. (Used for close, roll, expire).
 #                 - cumulative_pnl: Makes a separate API call to GET /api/cumulative_pnl/{ticker}
 #                                   and verifies the result.
 #                 - adjusted_cost_basis: Makes a separate API call to GET /api/cost_basis/{ticker}
@@ -49,6 +50,66 @@
 #                numbers will be compared with an approximation.
 # ---------------------------------------------------------------------------
 
+- name: "Wheel Scenario: Sell Put -> Close -> Sell Put -> Assign"
+  variables:
+    ticker: "TEST"
+    put_strike: 100
+    call_strike: 110
+  steps:
+    - name: "Step 1: Sell a new put option"
+      action: new_trade
+      payload:
+        underlying_ticker: "{{ticker}}"
+        trade_type: "Sell Put"
+        expiration_date: "2025-01-31"
+        strike_price: "{{put_strike}}"
+        premium_received: 1.0
+        number_of_contracts: 1
+        transaction_date: "2025-01-01"
+        fees: 0.66
+      save_as: put_trade
+      expectations:
+        - type: premium_per_share
+          value: 1.0
+        - type: net_premium_received
+          value: 99.34 # (1.0 * 100) - 0.66
+
+    - name: "Step 2: Close the put option"
+      action: close
+      trade_id: "{{put_trade.id}}"
+      payload:
+        buy_back_price: 0.2
+        buy_back_date: "2025-01-15"
+        closing_fees: 0.66
+      expectations:
+        - type: net_premium_received
+          value: 78.68 # 99.34 - 20 - 0.66
+
+    - name: "Step 3: Sell a new put option"
+      action: new_trade
+      payload:
+        underlying_ticker: "{{ticker}}"
+        trade_type: "Sell Put"
+        expiration_date: "2025-01-31"
+        strike_price: "{{put_strike}}"
+        premium_received: 0.7
+        number_of_contracts: 1
+        transaction_date: "2025-01-16"
+        fees: 0.66
+      save_as: put_trade
+      expectations:
+        - type: premium_per_share
+          value: 0.7
+        - type: net_premium_received
+          value: 69.34 # (0.7 * 100) - 0.66
+
+    - name: "Step 4: Assign the put option"
+      action: assign
+      trade_id: "{{put_trade.id}}"
+      expectations:
+        - type: net_premium_received
+          value: 69.34 # (0.7 * 100) - 0.66
+  
 - name: "Wheel Scenario: Sell Put -> Assign -> Sell Call -> Expire"
   variables:
     ticker: "TEST"
@@ -68,12 +129,17 @@
         fees: 0.66
       save_as: put_trade
       expectations:
-        - type: premium_received
+        - type: premium_per_share
           value: 1.0
+        - type: net_premium_received
+          value: 99.34 # (1.0 * 100) - 0.66
 
     - name: "Step 2: Assign the put option"
       action: assign
       trade_id: "{{put_trade.id}}"
+      expectations:
+        - type: net_premium_received
+          value: 99.34 # (1.0 * 100) - 0.66
 
     - name: "Step 3: Sell a new call option"
       action: new_trade
@@ -88,19 +154,25 @@
         fees: 0.66
       save_as: call_trade
       expectations:
-        - type: premium_received
+        - type: premium_per_share
           value: 0.5
+        - type: net_premium_received
+          value: 49.34 # (0.5 * 100) - 0.66
+        - type: adjusted_cost_basis
+          value: 98.51
 
     - name: "Step 4: Expire the call option"
       action: expire
       trade_id: "{{call_trade.id}}"
       expectations:
-        - type: net_premium
+        - type: net_premium_received
           value: 49.34 # (0.5 * 100) - 0.66
+        - type: adjusted_cost_basis
+          value: 98.51
 
     - name: "Step 5: Verify the final state of the wheel"
       action: verify_state
       ticker: "{{ticker}}"
       expectations:
         - type: cumulative_pnl
-          value: 49.34 # Only the expired call has generated net premium so far
+          value: 0 # cumulative_pnl is only generated when the call option is assigned

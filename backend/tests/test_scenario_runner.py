@@ -67,6 +67,11 @@ def _execute_action(step, context):
         response = client.post("/api/trades/", json=step["payload"])
         assert response.status_code == 200
         return response.json()
+
+    elif action == "close":
+        response = client.put(f"/api/trades/{step['trade_id']}/close", json=step["payload"])
+        assert response.status_code == 200
+        return response.json()
         
     elif action == "assign":
         response = client.put(f"/api/trades/{step['trade_id']}/assign")
@@ -94,17 +99,29 @@ def _process_expectations(step, action_response, context):
         exp_type = expectation["type"]
         exp_value = expectation["value"]
 
-        if exp_type == "premium_received":
+        if exp_type == "premium_per_share":
             assert action_response["premium_received"] == pytest.approx(exp_value)
             
-        elif exp_type == "net_premium":
+        elif exp_type == "net_premium_received":
             assert action_response["net_premium_received"] == pytest.approx(exp_value)
 
         elif exp_type == "cumulative_pnl":
-            response = client.get(f"/api/cumulative_pnl/{step['ticker']}")
+            ticker = step.get('ticker') or context.get('ticker')
+            if not ticker:
+                raise ValueError("Could not find 'ticker' for cumulative_pnl expectation")
+            response = client.get(f"/api/cumulative_pnl/{ticker}")
             assert response.status_code == 200
             actual_pnl = response.json()["cumulative_pnl"]
             assert actual_pnl == pytest.approx(exp_value)
+
+        elif exp_type == "adjusted_cost_basis":
+            ticker = step.get('ticker') or context.get('ticker')
+            if not ticker:
+                raise ValueError("Could not find 'ticker' for adjusted_cost_basis expectation")
+            response = client.get(f"/api/cost_basis/{ticker}")
+            assert response.status_code == 200
+            actual_basis = response.json()["adjusted_cost_basis"]
+            assert actual_basis == pytest.approx(exp_value)
             
         else:
             raise ValueError(f"Unknown expectation type: {exp_type}")
