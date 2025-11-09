@@ -31,6 +31,7 @@ class Trade(TradeBase):
     buy_back_price: Optional[float] = None
     closing_fees: Optional[float] = None
     net_premium_received: Optional[float] = None
+    stock_pnl: Optional[float] = None
     assigned: bool
     rolled_from_id: Optional[int] = None
 
@@ -43,6 +44,12 @@ class CostBasis(BaseModel):
     adjusted_cost_basis: float
 
     model_config = ConfigDict(from_attributes=True)
+
+class StockSell(BaseModel):
+    ticker: str
+    sell_price: float
+    sell_date: date
+    fees: float = 0.0
 
 class TradeClose(BaseModel):
     buy_back_price: float

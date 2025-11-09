@@ -96,7 +96,7 @@ def roll_trade(trade_id: int, trade_roll: schemas.TradeRoll, db: Session = Depen
         raise HTTPException(status_code=404, detail="Trade not found")
 
     # Close the old trade
-    db_trade_to_roll.buy_back_price = 0  # Or you can have a separate field for roll cost
+    db_trade_to_roll.buy_back_price = 0
     db_trade_to_roll.buy_back_date = trade_roll.roll_date
     db_trade_to_roll.status = "Rolled"
     db_trade_to_roll.closing_fees = trade_roll.closing_fees
@@ -110,11 +110,13 @@ def roll_trade(trade_id: int, trade_roll: schemas.TradeRoll, db: Session = Depen
         strike_price=trade_roll.strike_price,
         premium_received=trade_roll.premium_received,
         number_of_contracts=db_trade_to_roll.number_of_contracts,
-        transaction_date=db_trade_to_roll.transaction_date, # Should this be today's date?
+        transaction_date=db_trade_to_roll.transaction_date,
         status="Open",
         rolled_from_id=db_trade_to_roll.id,
         fees=trade_roll.fees
     )
+    new_trade.net_premium_received = (new_trade.premium_received * new_trade.number_of_contracts * 100) - new_trade.fees
+
 
     db.add(new_trade)
     db.commit()
@@ -175,12 +177,36 @@ def expire_trade(trade_id: int, db: Session = Depends(get_db)):
     db.refresh(db_trade)
     return db_trade
 
+@app.post("/api/sell_stock", response_model=schemas.Trade)
+def sell_stock(stock_sell: schemas.StockSell, db: Session = Depends(get_db)):
+    assigned_put = db.query(models.Trade).filter(
+        models.Trade.underlying_ticker == stock_sell.ticker,
+        models.Trade.trade_type == 'Sell Put',
+        models.Trade.status == 'Assigned'
+    ).order_by(models.Trade.transaction_date.desc()).first()
+
+    if not assigned_put:
+        raise HTTPException(status_code=404, detail="No assigned put found to sell stock against")
+
+    cost_basis_data = get_cost_basis(stock_sell.ticker, db)
+    adjusted_cost_basis = cost_basis_data.adjusted_cost_basis
+    number_of_shares = assigned_put.number_of_contracts * 100
+
+    stock_pnl = (stock_sell.sell_price - adjusted_cost_basis) * number_of_shares - stock_sell.fees
+    assigned_put.stock_pnl = stock_pnl
+    assigned_put.status = "Wheel Closed" # A new status to signify completion
+
+    db.commit()
+    db.refresh(assigned_put)
+    return assigned_put
+
+
 @app.get("/api/cumulative_pnl/{ticker}", response_model=schemas.CumulativePnl)
 def get_cumulative_pnl(ticker: str, db: Session = Depends(get_db)):
     assigned_put = db.query(models.Trade).filter(
         models.Trade.underlying_ticker == ticker,
         models.Trade.trade_type == 'Sell Put',
-        models.Trade.status == 'Assigned'
+        models.Trade.status.in_(['Assigned', 'Wheel Closed'])
     ).order_by(models.Trade.transaction_date.desc()).first()
 
     if not assigned_put:
@@ -191,25 +217,16 @@ def get_cumulative_pnl(ticker: str, db: Session = Depends(get_db)):
         models.Trade.transaction_date >= assigned_put.transaction_date
     ).all()
 
-    # Check if the wheel has been completed by a call assignment
-    assigned_call = next((trade for trade in trades if trade.trade_type == 'Sell Call' and trade.status == 'Assigned'), None)
+    total_net_premium = sum(trade.net_premium_received for trade in trades if trade.net_premium_received is not None)
 
-    if assigned_call:
-        # If the wheel is complete, calculate the total P&L
-        total_net_premium = sum(trade.net_premium_received for trade in trades if trade.net_premium_received is not None)
-        
-        cost_basis_data = get_cost_basis(ticker, db)
-        adjusted_cost_basis = cost_basis_data.adjusted_cost_basis
-        
-        sell_price = assigned_call.strike_price
-        number_of_shares = assigned_call.number_of_contracts * 100
-        
-        stock_pnl = (sell_price - adjusted_cost_basis) * number_of_shares
-        total_cumulative_pnl = total_net_premium + stock_pnl
+    if assigned_put.stock_pnl is not None:
+        # If the wheel is complete, the P&L is the sum of all option premiums plus the stock P&L
+        total_cumulative_pnl = total_net_premium + assigned_put.stock_pnl
         return schemas.CumulativePnl(cumulative_pnl=total_cumulative_pnl)
     else:
-        # If the wheel is not complete, the cumulative P&L is considered 0
-        return schemas.CumulativePnl(cumulative_pnl=0)
+        # If the wheel is not complete, the cumulative P&L is just the options premium
+        return schemas.CumulativePnl(cumulative_pnl=total_net_premium)
+
 
 @app.get("/api/dashboard/")
 def get_dashboard_data(db: Session = Depends(get_db)):

@@ -24,6 +24,7 @@ class Trade(Base):
     net_premium_received = Column(Float, nullable=True)
     fees = Column(Float, default=0.0)
     closing_fees = Column(Float, default=0.0)
+    stock_pnl = Column(Float, nullable=True)
     assigned = Column(Boolean, default=False)
     rolled_from_id = Column(Integer, ForeignKey("trades.id"), nullable=True)
 
