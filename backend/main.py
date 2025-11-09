@@ -115,14 +115,13 @@ def roll_trade(trade_id: int, trade_roll: schemas.TradeRoll, db: Session = Depen
         rolled_from_id=db_trade_to_roll.id,
         fees=trade_roll.fees
     )
-    new_trade.net_premium_received = (new_trade.premium_received * new_trade.number_of_contracts * 100) - new_trade.fees
-
-
     db.add(new_trade)
     db.commit()
-    db.refresh(new_trade)
-
+    # Now calculate the net premium on the managed object
+    new_trade.net_premium_received = (new_trade.premium_received * new_trade.number_of_contracts * 100) - new_trade.fees
     db.commit()
+
+    db.refresh(new_trade)
     db.refresh(db_trade_to_roll)
 
     return new_trade
